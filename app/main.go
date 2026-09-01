@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/labstack/echo/v4"
 
 	mysqlRepo "github.com/bxcodec/go-clean-arch/internal/repository/mysql"
 
@@ -59,10 +60,11 @@ func main() {
 			log.Fatal("got error when closing the DB connection", err)
 		}
 	}()
-	// prepare echo
+	// prepare gin
 
-	e := echo.New()
-	e.Use(middleware.CORS)
+	gin.SetMode(gin.ReleaseMode)
+	g := gin.New()
+	g.Use(middleware.CORS())
 	timeoutStr := os.Getenv("CONTEXT_TIMEOUT")
 	timeout, err := strconv.Atoi(timeoutStr)
 	if err != nil {
@@ -70,7 +72,15 @@ func main() {
 		timeout = defaultTimeout
 	}
 	timeoutContext := time.Duration(timeout) * time.Second
-	e.Use(middleware.SetRequestContextWithTimeout(timeoutContext))
+	g.Use(middleware.SetRequestContextWithTimeout(timeoutContext))
+
+	g.HandleMethodNotAllowed = true
+	g.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"message": "Not Found"})
+	})
+	g.NoMethod(func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"message": "Method Not Allowed"})
+	})
 
 	// Prepare Repository
 	authorRepo := mysqlRepo.NewAuthorRepository(dbConn)
@@ -78,12 +88,12 @@ func main() {
 
 	// Build service Layer
 	svc := article.NewService(articleRepo, authorRepo)
-	rest.NewArticleHandler(e, svc)
+	rest.NewArticleHandler(g, svc)
 
 	// Start Server
 	address := os.Getenv("SERVER_ADDRESS")
 	if address == "" {
 		address = defaultAddress
 	}
-	log.Fatal(e.Start(address)) //nolint
+	log.Fatal(g.Run(address)) //nolint
 }

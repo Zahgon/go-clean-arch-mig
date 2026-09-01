@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	faker "github.com/go-faker/faker/v4"
-	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -20,6 +20,13 @@ import (
 	"github.com/bxcodec/go-clean-arch/internal/rest"
 	"github.com/bxcodec/go-clean-arch/internal/rest/mocks"
 )
+
+func newRouter(svc rest.ArticleService) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	rest.NewArticleHandler(r, svc)
+	return r
+}
 
 func TestFetch(t *testing.T) {
 	var mockArticle domain.Article
@@ -32,18 +39,13 @@ func TestFetch(t *testing.T) {
 	cursor := "2"
 	mockUCase.On("Fetch", mock.Anything, cursor, int64(num)).Return(mockListArticle, "10", nil)
 
-	e := echo.New()
+	r := newRouter(mockUCase)
 	req, err := http.NewRequestWithContext(context.TODO(),
-		echo.GET, "/article?num=1&cursor="+cursor, strings.NewReader(""))
-	assert.NoError(t, err)
+		http.MethodGet, "/articles?num=1&cursor="+cursor, strings.NewReader(""))
+	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	handler := rest.ArticleHandler{
-		Service: mockUCase,
-	}
-	err = handler.FetchArticle(c)
-	require.NoError(t, err)
+	r.ServeHTTP(rec, req)
 
 	responseCursor := rec.Header().Get("X-Cursor")
 	assert.Equal(t, "10", responseCursor)
@@ -57,17 +59,12 @@ func TestFetchError(t *testing.T) {
 	cursor := "2"
 	mockUCase.On("Fetch", mock.Anything, cursor, int64(num)).Return(nil, "", domain.ErrInternalServerError)
 
-	e := echo.New()
-	req, err := http.NewRequestWithContext(context.TODO(), echo.GET, "/article?num=1&cursor="+cursor, strings.NewReader(""))
-	assert.NoError(t, err)
+	r := newRouter(mockUCase)
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodGet, "/articles?num=1&cursor="+cursor, strings.NewReader(""))
+	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	handler := rest.ArticleHandler{
-		Service: mockUCase,
-	}
-	err = handler.FetchArticle(c)
-	require.NoError(t, err)
+	r.ServeHTTP(rec, req)
 
 	responseCursor := rec.Header().Get("X-Cursor")
 	assert.Equal(t, "", responseCursor)
@@ -86,20 +83,12 @@ func TestGetByID(t *testing.T) {
 
 	mockUCase.On("GetByID", mock.Anything, int64(num)).Return(mockArticle, nil)
 
-	e := echo.New()
-	req, err := http.NewRequestWithContext(context.TODO(), echo.GET, "/article/"+strconv.Itoa(num), strings.NewReader(""))
-	assert.NoError(t, err)
+	r := newRouter(mockUCase)
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodGet, "/articles/"+strconv.Itoa(num), strings.NewReader(""))
+	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("article/:id")
-	c.SetParamNames("id")
-	c.SetParamValues(strconv.Itoa(num))
-	handler := rest.ArticleHandler{
-		Service: mockUCase,
-	}
-	err = handler.GetByID(c)
-	require.NoError(t, err)
+	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockUCase.AssertExpectations(t)
@@ -122,20 +111,13 @@ func TestStore(t *testing.T) {
 
 	mockUCase.On("Store", mock.Anything, mock.AnythingOfType("*domain.Article")).Return(nil)
 
-	e := echo.New()
-	req, err := http.NewRequestWithContext(context.TODO(), echo.POST, "/article", strings.NewReader(string(j)))
-	assert.NoError(t, err)
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	r := newRouter(mockUCase)
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodPost, "/articles", strings.NewReader(string(j)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/article")
-
-	handler := rest.ArticleHandler{
-		Service: mockUCase,
-	}
-	err = handler.Store(c)
-	require.NoError(t, err)
+	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusCreated, rec.Code)
 	mockUCase.AssertExpectations(t)
@@ -152,20 +134,12 @@ func TestDelete(t *testing.T) {
 
 	mockUCase.On("Delete", mock.Anything, int64(num)).Return(nil)
 
-	e := echo.New()
-	req, err := http.NewRequestWithContext(context.TODO(), echo.DELETE, "/article/"+strconv.Itoa(num), strings.NewReader(""))
-	assert.NoError(t, err)
+	r := newRouter(mockUCase)
+	req, err := http.NewRequestWithContext(context.TODO(), http.MethodDelete, "/articles/"+strconv.Itoa(num), strings.NewReader(""))
+	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("article/:id")
-	c.SetParamNames("id")
-	c.SetParamValues(strconv.Itoa(num))
-	handler := rest.ArticleHandler{
-		Service: mockUCase,
-	}
-	err = handler.Delete(c)
-	require.NoError(t, err)
+	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	mockUCase.AssertExpectations(t)

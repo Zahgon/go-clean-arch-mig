@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	validator "gopkg.in/go-playground/validator.v9"
 
@@ -37,53 +37,68 @@ type ArticleHandler struct {
 const defaultNum = 10
 
 // NewArticleHandler will initialize the articles/ resources endpoint
-func NewArticleHandler(e *echo.Echo, svc ArticleService) {
+func NewArticleHandler(r *gin.Engine, svc ArticleService) {
 	handler := &ArticleHandler{
 		Service: svc,
 	}
-	e.GET("/articles", handler.FetchArticle)
-	e.POST("/articles", handler.Store)
-	e.GET("/articles/:id", handler.GetByID)
-	e.DELETE("/articles/:id", handler.Delete)
+	r.GET("/articles", handler.FetchArticle)
+	r.POST("/articles", handler.Store)
+	r.GET("/articles/:id", handler.GetByID)
+	r.DELETE("/articles/:id", handler.Delete)
+	r.OPTIONS("/articles", preflight("OPTIONS, GET, POST"))
+	r.OPTIONS("/articles/:id", preflight("OPTIONS, GET, DELETE"))
+}
+
+// preflight replicates the automatic OPTIONS handling of the previous router.
+func preflight(allow string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Allow", allow)
+		c.Status(http.StatusNoContent)
+	}
 }
 
 // FetchArticle will fetch the article based on given params
-func (a *ArticleHandler) FetchArticle(c echo.Context) error {
+func (a *ArticleHandler) FetchArticle(c *gin.Context) {
 
-	numS := c.QueryParam("num")
+	numS := c.Query("num")
 	num, err := strconv.Atoi(numS)
 	if err != nil || num == 0 {
 		num = defaultNum
 	}
 
-	cursor := c.QueryParam("cursor")
-	ctx := c.Request().Context()
+	cursor := c.Query("cursor")
+	ctx := c.Request.Context()
 
 	listAr, nextCursor, err := a.Service.Fetch(ctx, cursor, int64(num))
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return
 	}
 
-	c.Response().Header().Set(`X-Cursor`, nextCursor)
-	return c.JSON(http.StatusOK, listAr)
+	// Use the writer header directly: gin's c.Header deletes the header when
+	// the value is empty, but the baseline emits an empty X-Cursor header.
+	c.Writer.Header().Set(`X-Cursor`, nextCursor)
+	c.JSON(http.StatusOK, listAr)
 }
 
 // GetByID will get article by given id
-func (a *ArticleHandler) GetByID(c echo.Context) error {
+func (a *ArticleHandler) GetByID(c *gin.Context) {
 	idP, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusNotFound, domain.ErrNotFound.Error())
+		c.JSON(http.StatusNotFound, domain.ErrNotFound.Error())
+		return
 	}
 
 	id := int64(idP)
-	ctx := c.Request().Context()
+	ctx := c.Request.Context()
 
 	art, err := a.Service.GetByID(ctx, id)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return
 	}
 
-	return c.JSON(http.StatusOK, art)
+	c.JSON(http.StatusOK, art)
 }
 
 func isRequestValid(m *domain.Article) (bool, error) {
@@ -96,43 +111,48 @@ func isRequestValid(m *domain.Article) (bool, error) {
 }
 
 // Store will store the article by given request body
-func (a *ArticleHandler) Store(c echo.Context) (err error) {
+func (a *ArticleHandler) Store(c *gin.Context) {
 	var article domain.Article
-	err = c.Bind(&article)
+	err := c.ShouldBind(&article)
 	if err != nil {
-		return c.JSON(http.StatusUnprocessableEntity, err.Error())
+		c.JSON(http.StatusUnprocessableEntity, err.Error())
+		return
 	}
 
 	var ok bool
 	if ok, err = isRequestValid(&article); !ok {
-		return c.JSON(http.StatusBadRequest, err.Error())
+		c.JSON(http.StatusBadRequest, err.Error())
+		return
 	}
 
-	ctx := c.Request().Context()
+	ctx := c.Request.Context()
 	err = a.Service.Store(ctx, &article)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return
 	}
 
-	return c.JSON(http.StatusCreated, article)
+	c.JSON(http.StatusCreated, article)
 }
 
 // Delete will delete article by given param
-func (a *ArticleHandler) Delete(c echo.Context) error {
+func (a *ArticleHandler) Delete(c *gin.Context) {
 	idP, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusNotFound, domain.ErrNotFound.Error())
+		c.JSON(http.StatusNotFound, domain.ErrNotFound.Error())
+		return
 	}
 
 	id := int64(idP)
-	ctx := c.Request().Context()
+	ctx := c.Request.Context()
 
 	err = a.Service.Delete(ctx, id)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return
 	}
 
-	return c.NoContent(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 func getStatusCode(err error) int {
